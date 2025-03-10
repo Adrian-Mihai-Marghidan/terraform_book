@@ -6,16 +6,18 @@ resource "aws_launch_configuration" "example" {
   image_id        = "ami-0fb653ca2d3203ac1"
   instance_type   = "t2.micro"
   security_groups = [aws_security_group.instance.id]
-  user_data       = <<-EOF
- #!/bin/bash
- echo "Hello, World" > index.xhtml
- nohup busybox httpd -f -p ${var.server_port} &
- EOF
+  # Render the User Data script as a template
+  user_data = templatefile("user-data.sh", {
+    server_port = var.server_port
+    db_address  = data.terraform_remote_state.db.outputs.address
+    db_port     = data.terraform_remote_state.db.outputs.port
+  })
   # Required when using a launch configuration with an autoscaling group.
   lifecycle {
     create_before_destroy = true
   }
 }
+
 
 data "aws_vpc" "default" {
   default = true
@@ -51,11 +53,6 @@ resource "aws_security_group" "instance" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-}
-
-variable "server_port" {
-  type    = number
-  default = 8080
 }
 
 resource "aws_lb" "example" {
@@ -129,7 +126,21 @@ resource "aws_lb_listener_rule" "asg" {
   }
 }
 
-output "alb_dns_name" {
-  value       = aws_lb.example.dns_name
-  description = "The domain name of the load balancer"
+terraform {
+  backend "s3" {
+    bucket         = "terraform-up-and-running-state-mihai"
+    key            = "stage/services/webserver-cluster/terraform.tfstate"
+    region         = "us-east-2"
+    dynamodb_table = "terraform-up-and-running-locks"
+    encrypt        = true
+  }
+}
+
+data "terraform_remote_state" "db" {
+  backend = "s3"
+  config = {
+    bucket = "terraform-up-and-running-state-mihai"
+    key    = "stage/data-stores/mysql/terraform.tfstate"
+    region = "us-east-2"
+  }
 }
